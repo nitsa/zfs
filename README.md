@@ -9,7 +9,7 @@ like a madman trying to interrupt the format process. Although I succeeded
 in canceling the process,  part of the hard drive had already been 
 formatted.
 
-> This is a forensics story
-> Python script mentioned in the article has been ported for use with Python 3 as extractor.py
-> Scripts tested on Win10
-> Enjoy !
+1. This is a forensics story
+2. Python script mentioned in the article has been ported for use with Python 3 as extractor.py
+3. Scripts tested on Win10
+4. Enjoy !
