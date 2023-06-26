@@ -129,7 +129,7 @@ on disk.
 
 --[ 5 - File data block structure
 
-Selecting offset 0x1666c3005 (6013333509‬ in decimal) to view the data
+Selecting offset 0x1666c3005 (6013333509 in decimal) to view the data
 stored on the image.
 
 root@FewwBSD:/media # hexdump -s 6013333509 -C -n 208 ada0.backup
@@ -168,7 +168,7 @@ Notice the following bytes before the signature {\rtf1\
 
 0x00 0x00 0x1a 0x85 0xb1 [signature]
 
-Focusing on the 4 bytes 0x00 0x00 0x1a 0x85 -> 0x00001a85 -> ‭6789d
+Focusing on the 4 bytes 0x00 0x00 0x1a 0x85 -> 0x00001a85 -> 6789d
 
 Going down in memory the data appear to end when many 0x00 values appear.
 
