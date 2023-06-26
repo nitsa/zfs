@@ -1,0 +1,669 @@
+|=-----------------------------------------------------------------------=|
+|=-----------------------------------------------------------------------=|
+|=-------------------=[ ZFS Raiders of the Lost File ]=------------------=|
+|=-----------------------------------------------------------------------=|
+|=--------------------------=[ by Heisenberg ]=--------------------------=|
+|=-----------------------------------------------------------------------=|
+
+--[ Table of contents
+
+0) Intro
+1) The HD
+2) The Image
+3) The Signature
+4) The Hunt
+5) File data block structure
+6) File data blocks
+7) LZ4 Header structure
+8) The Automation
+9) The image sample
+0xA) The Poem
+0xB) References
+
+
+--[ 0 - Intro
+
+A nice summer day I decided that I did not wish to keep my old hard 
+drive. Before throwing it into junk I started the format process. It was
+after a couple of minutes that I realized I had not backed up an
+important file. Inside that file was a poem. I jumped over the keyboard 
+like a madman trying to interrupt the format process. Although I succeeded
+in canceling the process,  part of the hard drive had already been 
+formatted.
+
+
+--[ 1 - The HD
+
+On the hard drive was installed a FreeBSD image with ZFS filesystem [1].
+It was a default installation and the file compression was on. The 
+compression was LZ4. That would result in each file been compressed on the
+fly using LZ4 before been written onto disk. I tried many tools that were
+available over the Internet, but I could not recover the poem. Perhaps 
+filesystem structures that would eventually point to data blocks which 
+contain the file data were destroyed by the (interrupted) format process
+in such a way, that tools were not able to recover the file. I decided
+I need to follow a different approach. What if I could extract the file
+data blocks by locating and directly accessing them from the hard drive ?
+
+
+--[ 2 - The Image
+
+For accessing the raw data on the hard drive I needed to create a backup
+image. I used ddrescue tool. GNU ddrescue is a data recovery tool [2]. It
+copies data from one file or block device (hard disc, cdrom, etc) to 
+another trying to rescue the good parts first, in case of read errors. In
+my case I copied all data from block device ada0 (which is the hard drive
+I attempted to format) into file ada0.backup using the following command.
+
+ddrescue /dev/ada0 /media/ada0.backup
+
+That would result in a file named ada0.backup been 25 GB of size.
+
+
+--[ 3 - The Signature
+
+I could now remember that the file type I was looking for was an rtf.
+I could also remember that the hard drive did not contain many rtf files,
+although it did not really matter in terms of how I was going to work for
+recovering the file. What if I compress a known rtf file using LZ4 and
+then create a signature on a part of the compressed file that detects all
+LZ4 compressed rtf files ? That would give me the ability to detect the
+lost file on the image ada0.backup. I would choose to create such a
+signature on the beginning of the rtf file from the header, since can be
+universal (for all rtf files) and would point at start of the file on disk.
+
+Following are first bytes of an rtf file [3].
+
+root@FewwBSD:/media # hexdump -C -n 32 test.rtf
+00000000 7b 5c 72 74 66 31 5c 61 6e 73 69 5c 61 6e 73 69 {\rtf1\ansi\ansi
+00000010 63 70 67 31 32 35 32 5c 64 65 66 66 30 5c 6e 6f cpg1252\deff0\no
+
+Now compress the file and show again the first bytes of compressed file.
+
+root@FewwBSD:/media # lz4 test.rtf 
+Compressed filename will be : test.rtf.lz4 
+Compressed 53644 bytes into 6802 bytes ==> 12.68%                              
+
+root@FewwBSD:/media # hexdump -C -n 32 test.rtf.lz4
+00000000 04 22 4d 18 64 40 a7 7f 1a 00 00 b1 7b 5c 72 74 ."M.d@......{\rt
+00000010 66 31 5c 61 6e 73 69 05 00 f0 75 63 70 67 31 32 f1\ansi...ucpg12
+
+Notice the following bytes which exist in both compressed and non 
+compressed version of the file.
+
+0x7b 0x5c 0x72 0x74 0x66 0x31 0x5c
+
+, which represent string {\rtf1\
+
+Will now create a Yara [4] signature in file detect_rtf.yara and scan the
+image ada0.backup with that signature.
+
+rule detect_rtf
+{
+strings:
+$rtf_header = { 7B 5C 72 74 66 31 5C }
+
+condition:
+$rtf_header
+}
+
+
+--[ 4 - The Hunt
+
+Started the yara scan on the image which brings up following results.
+
+yara64.exe -s detect_rtf.yara ada0.backup
+
+detect_rtf ada0.backup
+0x1456b6005:$rtf_header: 7B 5C 72 74 66 31 5C
+0x1666b1005:$rtf_header: 7B 5C 72 74 66 31 5C
+0x1666c3005:$rtf_header: 7B 5C 72 74 66 31 5C
+0x18991a28e:$rtf_header: 7B 5C 72 74 66 31 5C
+0x2c20348fa:$rtf_header: 7B 5C 72 74 66 31 5C
+0x5ca004115:$rtf_header: 7B 5C 72 74 66 31 5C
+
+All offsets above are possible beginning locations for compressed rtf 
+files. Will select one location and try decoding the structure of the data
+on disk.
+
+
+--[ 5 - File data block structure
+
+Selecting offset 0x1666c3005 (6013333509‬ in decimal) to view the data
+stored on the image.
+
+root@FewwBSD:/media # hexdump -s 6013333509 -C -n 208 ada0.backup
+1666c3005 7b 5c 72 74 66 31 5c 61 6e 73 69 05 00 f0 75 63 {\rtf1\ansi...uc
+1666c3015 70 67 31 32 35 32 5c 64 65 66 66 30 5c 6e 6f 75 pg1252\deff0\nou
+1666c3025 69 63 6f 6d 70 61 74 7b 5c 66 6f 6e 74 74 62 6c icompat{\fonttbl
+1666c3035 7b 5c 66 30 5c 66 6e 69 6c 5c 66 63 68 61 72 73 {\f0\fnil\fchars
+1666c3045 65 74 30 20 43 61 6c 69 62 72 69 3b 7d 7d 0d 0a et0 Calibri;}}..
+1666c3055 7b 5c 2a 5c 67 65 6e 65 72 61 74 6f 72 20 52 69 {\*\generator Ri
+1666c3065 63 68 65 64 32 30 20 31 30 2e 30 2e 31 37 31 33 ched20 10.0.1713
+1666c3075 34 7d 5c 76 69 65 77 6b 69 6e 64 34 5c 75 63 31 4}\viewkind4\uc1
+1666c3085 20 0d 0a 5c 70 61 72 64 5c 73 61 32 30 30 5c 73  ..\pard\sa200\s
+1666c3095 6c 32 34 06 00 51 6d 75 6c 74 31 6b 00 f0 03 73 l24..Qmult1k...s
+1666c30a5 32 32 5c 6c 61 6e 67 39 7b 5c 70 69 63 74 7b 5c 22\lang9{\pict{\
+1666c30b5 2a 08 00 f0 01 70 72 6f 70 7d 5c 77 6d 65 74 61 *....prop}\wmeta
+1666c30c5 66 69 6c 65 38 14 00 41 77 37 34 38 09 00 51 68 file8..Aw748..Qh
+
+Viewing the same data 19 bytes earlier.
+
+root@FewwBSD:/media # hexdump -s 6013333490 -C -n 208 ada0.backup
+1666c2ff2 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 ................
+1666c3002 1a 85 b1 7b 5c 72 74 66 31 5c 61 6e 73 69 05 00 ...{\rtf1\ansi..
+1666c3012 f0 75 63 70 67 31 32 35 32 5c 64 65 66 66 30 5c .ucpg1252\deff0\
+1666c3022 6e 6f 75 69 63 6f 6d 70 61 74 7b 5c 66 6f 6e 74 nouicompat{\font
+1666c3032 74 62 6c 7b 5c 66 30 5c 66 6e 69 6c 5c 66 63 68 tbl{\f0\fnil\fch
+1666c3042 61 72 73 65 74 30 20 43 61 6c 69 62 72 69 3b 7d arset0 Calibri;}
+1666c3052 7d 0d 0a 7b 5c 2a 5c 67 65 6e 65 72 61 74 6f 72 }..{\*\generator
+1666c3062 20 52 69 63 68 65 64 32 30 20 31 30 2e 30 2e 31  Riched20 10.0.1
+1666c3072 37 31 33 34 7d 5c 76 69 65 77 6b 69 6e 64 34 5c 7134}\viewkind4\
+1666c3082 75 63 31 20 0d 0a 5c 70 61 72 64 5c 73 61 32 30 uc1 ..\pard\sa20
+1666c3092 30 5c 73 6c 32 34 06 00 51 6d 75 6c 74 31 6b 00 0\sl24..Qmult1k.
+1666c30a2 f0 03 73 32 32 5c 6c 61 6e 67 39 7b 5c 70 69 63 ..s22\lang9{\pic
+1666c30b2 74 7b 5c 2a 08 00 f0 01 70 72 6f 70 7d 5c 77 6d t{\*....prop}\wm
+
+Notice the following bytes before the signature {\rtf1\
+
+0x00 0x00 0x1a 0x85 0xb1 [signature]
+
+Focusing on the 4 bytes 0x00 0x00 0x1a 0x85 -> 0x00001a85 -> ‭6789d
+
+Going down in memory the data appear to end when many 0x00 values appear.
+
+root@FewwBSD:/media # hexdump -s 6013333490 -C -n 6832 ada0.backup
+[...]
+1666c4a72 69 6e 93 00 22 20 2a 3b 00 4f 7d 0d 0a 00 01 00 in.." *;.O}.....
+1666c4a82 5c 50 00 00 00 00 00 00 00 00 00 00 00 00 00 00 \P..............
+1666c4a92 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 ................ 
+
+Notice that decimal count 6832 in hexdump command and 4 byte value 6789d
+are almost same.
+
+Based on that analysis, would assume that the file data block near
+6013333509d follow the following format.
+
+[DWORD LZ4_data_size][VAR LZ4 data][Trailer NULLs]
+[0x00 0x00 0x1a 0x85][0xb1 0x7b 0x5c 0x72 0x74 0x66 0x31 0x5c ..][0x00 ..]
+
+
+--[ 6 - File data blocks
+
+So far managed to get the first file data block. The ZFS operating system
+will allocate more data blocks in case a file does not fit in a single 
+block. On the default installation of FreeBSD I notice that smallest data
+block as a file grows is close to 65KB. That would mean 65 KB of compressed
+space for storing continuous file data. For bigger files we would need to 
+find the additional data blocks for the same file that would be spread over
+the image space and concatenate them in a correct order. In this paper will
+only focus on files that fit in a single 65KB data block. That removes the
+necessity of scanning internal ZFS structures that eventually point to the
+data blocks which contains file contents but limits us in recovering only
+small files. Nevertheless there may be some ideas (not verified) on
+discovering all data blocks a bigger file may occupy, like following.
+
+(i)   More signatures may exist in different parts of the file
+(ii)  Assumption that different blocks of same file may be saved in 
+      relatively short offset distance on disk
+(iii) Entropy of the file
+(iv)  Data type of the file like text vs binary
+(v)   Randomly assemble different data blocks within short offset distance
+
+
+
+--[ 7 - LZ4 Header structure
+
+Let's see how close the compressed file data structure from section (5)
+is with LZ4 specification [5].
+
+It seems like file data block is missing the LZ4 Header. Will manually
+attempt to reconstruct such a header taking into consideration examples
+of rtf compressed files using linux lz4 command, like the one used in
+section (3).
+
+A minimal LZ4 header would have the following format.
+
+[DWORD MagicNb][BYTE FLG][BYTE BD][BYTE HC]
+
+MagicNb = 0x04 0x22 0x4D 0x18 static
+
+FLG = 0x40 = 01 0 0 0 0 0 0
+01 : version
+0  : each block depends on previous ones for decoding
+0  : no Block checksum in data blocks
+0  : original (uncompressed) size of data NOT included within the header
+0  : no Content checksum will be appended after the EoS mark
+0  : reserved and set to 0
+0  : no DictID
+
+BD = 0x40 = 0 100 0000
+100 = 4 = 64 KB of Block Maximum Size
+bits 7 and last 4 bits are reserved thus set to 0
+
+The following code will generate the HC descriptor checksum for our case.
+
+import xxhash
+# FLG and BD as input
+payload = chr(0x40) + chr(0x40) 
+out = xxhash.xxh32(payload, seed=0).intdigest()
+out = hex((out>>8) & 0xFF)
+print out
+
+HC = 0xC0
+
+Following is the final calculated header.
+0x04 0x22 0x4D 0x18 0x40 0x40 0xC0
+
+Following the header should be the compressed data size. In our example
+from section (5) that was 0x00 0x00 0x1a 0x85. For constructing the LZ4
+buffer need to add those bytes in reverse order. Finally the LZ4 buffer
+that would be constructed based on the example image data block and the
+minimal header would be like following.
+
+[0x04 0x22 0x4D 0x18]                         ; MagicNb
+[0x40]                                        ; FLG
+[0x40]                                        ; BD
+[0xC0]                                        ; HC
+[0x85 0x1a 0x00 0x00]                         ; compressed data size
+[0xb1 0x7b 0x5c 0x72 0x74 0x66 0x31 0x5c ...] ; compressed data
+[0x00 ..]                                     ; NULL trailer
+
+
+--[ 8 - The Automation
+
+The following script automates the file extraction as mentioned in previous
+sections. Script will search through the image for a defined signature. In 
+our case that signature is the rtf signature mentioned before. When 
+signature is found will try to read the LZ4_data_size DWORD, then read the
+compressed block data and prepend the minimal LZ4 header. Finally will 
+try to decompress the compressed buffer. If LZ4_data_size DWORD is not 
+found then script abords decompression for that file and continues 
+scanning. If LZ4_data_size DWORD is found but file is split between
+multiple data blocks then script abords decompression for that file and
+continues scanning.
+
+The script will dump the compressed files and decompressed files that were
+found. The number in the file name is the offset within the image that 
+signature was found.
+
+Some script parameters can be changed in order to scan for different file
+types. Those parameters are image_path, chunk_size, sig_offset, sig_len,
+signature bytes and are described with comments inside the script.
+
+Following is an example of the script output for an 27GB input image, note
+that output may be trimmed.
+
+[*] 2019-09-21 17:03:02 Started
+[*] 2019-09-21 17:30:52 Sig found at offset 5459632133
+[*] 2019-09-21 17:30:52 Compressed data size found
+[*] 2019-09-21 17:30:52 Dumped compressed file compressed_5459632133
+[*] 2019-09-21 17:30:52 Error during decompressing file [..]
+[*] 2019-09-21 17:33:41 Sig found at offset 6013259781
+[*] 2019-09-21 17:33:41 Compressed data size found
+[*] 2019-09-21 17:33:41 Dumped compressed file compressed_6013259781
+[*] 2019-09-21 17:33:41 Decompressed in file decompressed_6013259781.rtf
+[*] 2019-09-21 17:33:41 Sig found at offset 6013333509
+[*] 2019-09-21 17:33:41 Compressed data size found
+[*] 2019-09-21 17:33:41 Dumped compressed file compressed_6013333509
+[*] 2019-09-21 17:33:41 Decompressed in file decompressed_6013333509.rtf
+[*] 2019-09-21 17:36:41 Sig found at offset 6602990222
+[*] 2019-09-21 18:03:23 Sig found at offset 11844929786
+[*] 2019-09-21 19:09:34 Sig found at offset 24863850773
+[*] 2019-09-21 19:22:49 Finished
+
+Following is the script code.
+
+# ------------------- >> Script code starts here <<-----------------------
+import struct
+import lz4.frame
+import datetime
+
+# Input image - can change this
+image_path = 'ada0.backup'
+
+# Chunk size of data read from image - can change this
+chunk_size = 1024
+
+# Approx. distance of signature from LZ4_data_size DWORD - can change this
+sig_offset = 20
+
+# Number of signature bytes - can change this
+sig_len = 7
+# Signature bytes - can change those
+sig_byte_0 = 0x7B
+sig_byte_1 = 0x5C
+sig_byte_2 = 0x72
+sig_byte_3 = 0x74
+sig_byte_4 = 0x66
+sig_byte_5 = 0x31
+sig_byte_6 = 0x5C
+
+current_pos = 1
+
+def current_datetime():
+ now = datetime.datetime.now()
+ return now.strftime("%Y-%m-%d %H:%M:%S")
+
+with open(image_path, 'rb') as f:
+ print ('[*] ' + current_datetime() + ' Started')
+
+ while True:
+  buf = f.read(chunk_size)
+
+  if buf:
+   i = 0
+   # Find data
+   while (i < len(buf) - sig_len):
+    if ord(buf[i]) == sig_byte_0:
+     if ord(buf[i + 1]) == sig_byte_1:
+      if ord(buf[i + 2]) == sig_byte_2:
+       if ord(buf[i + 3]) == sig_byte_3:
+        if ord(buf[i + 4]) == sig_byte_4:
+         if ord(buf[i + 5]) == sig_byte_5:
+          if ord(buf[i + 6]) == sig_byte_6:
+           sig_pos = f.tell() - (chunk_size - i)
+           save_pos = f.tell()
+           print ('[*] ' + current_datetime() + \
+                  ' Sig found at offset ' + str(sig_pos))
+           f.seek(sig_pos - sig_offset, 0)
+           buf = f.read(sig_offset)
+           j = sig_offset - 1
+
+           # Find data size
+           while (j > 0) :
+			# ZFS max block size starts from 65KB
+            if ord(buf[j]) <= 0x01:
+             if ord(buf[j - 1]) == 0x00:
+              data_size = struct.unpack('>I',buf[j - 1:j - 1 + 4])[0] + 4
+              
+              print ('[*] ' + current_datetime() + \
+                     ' Compressed data size found')
+
+              # Extract compressed data
+              f.seek(sig_pos - (sig_offset - j + 1) + 4, 0)
+              payload = f.read(data_size)
+
+              # LZ4 header (hard-coded)
+              # 0x04 0x22 0x4D 0x18 0x40 0x40 0xC0
+              header = chr(0x04) + chr(0x22) + chr(0x4D) + chr(0x18) + \
+                       chr(0x40) + chr(0x40) + \
+                       chr(0xC0) + \
+                       buf[j + 2] + buf[j + 1] + buf[j] + buf[j - 1]
+              data = header + payload
+
+              cf = 'compressed_' + str(sig_pos)
+              n = open(cf, 'wb')
+              n.write(data)
+              n.close()
+              
+              print ('[*] ' + current_datetime() + \
+                     ' Dumped compressed file ' + cf)
+
+              df = 'decompressed_' + str(sig_pos) + '.rtf'
+
+              try:
+               decompressed = lz4.frame.decompress(data)
+               n = open(df, 'wb')
+               n.write(decompressed)
+               n.close()
+               print ('[*] ' + current_datetime() + \
+                      ' Decompressed in file ' + df)
+              # This will catch error in case of incomplete compressed buff
+              except:
+               print ('[*] ' + current_datetime() + \
+                      ' Error during decompressing file ' + df)
+               pass
+
+              break
+
+            j = j - 1
+
+           # Restore position and keep searching for files
+           f.seek(save_pos, 0)
+    i = i + 1
+
+   if len(buf) == chunk_size:
+    f.seek(-sig_len, current_pos)
+
+  else:
+   print ('[*] ' + current_datetime() + ' Finished')
+   break
+
+# -------------------- >> Script code ends here <<------------------------
+
+
+--[ 9 - The image sample
+
+The following Base64 data can be used as an input to the script. It is part
+of a ZFS image.
+
+REIAARmEQAD3GDgxN0U4N0FCMEQ1OEU4M0Y3NDk2NzE4Q0RBNzcxRUIyMTRCMEUwMIAUGYVAAPAS
+Njk0MkM4RDc2REY4OUQwMEM0OUFENUE2OUM5NEFCQTNFSFMnMzmAABmGQABxMzY2QUMyRHADkEE1
+OEIwMTRFRLYGQUFDQTZQC2I0M0RCNDY8AwACABmHQAD4FzI3MzJCQ0M5N0U3RUI5RUM5REUzRThF
+QThGNTZENzk3MUNCRENEwDwZiEAA8AAxRTIzNTIzNUFCMjk2NTi5HLA5QkU4QzJBQ0M4Mno0Vzg0
+QjI4AAEZiUAAUEY1NkMytx3gNkY0ODBCMjZENzcwMDFzIrg0RTEwMjkwMzY0RYACGYpAAPABQzU2
+RjlFRTQyOUY0OTkyMHwuYEVGMzg0QscbMDI0RRtRJzREQAEZi0AAoDZDOEFGNTEyMDHACRBBzwr4
+BDBGM0JGRUNEMEI5MEQyRUQ4M0IAChmNQADwCDdFMTNCMTlENDBFMUZFODUxNzJFMTg0xQgAGy2Q
+NEZCNzQ5QjExegEPAgD/r1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGoWxe1xydGYxXGFu
+c2kFAPB1Y3BnMTI1MlxkZWZmMFxub3VpY29tcGF0e1xmb250dGJse1xmMFxmbmlsXGZjaGFyc2V0
+MCBDYWxpYnJpO319DQp7XCpcZ2VuZXJhdG9yIFJpY2hlZDIwIDEwLjAuMTcxMzR9XHZpZXdraW5k
+NFx1YzEgDQpccGFyZFxzYTIwMFxzbDI0BgBRbXVsdDFrAPADczIyXGxhbmc5e1xwaWN0e1wqCADw
+AXByb3B9XHdtZXRhZmlsZTgUAEF3NzQ4CQBRaDQ3MTASAIBnb2FsNDI0NQ0AEGgNAOAyNjcwIA0K
+MDEwMDA5MAEAUDM3YTMyCQAAAgAmNTEMACAwNBIAwTAwMDMwMTA4MDAwNQ4ARTAwYjAwAAIUAPAD
+DQowMDBjMDJiMjAwMWIwMTAzJwBHMDAxZUYAMTcwMVIABFYAAxAABHIAMDQxMD8AMDBjY1AAAAsA
+AUoAAEcAITAwGwAIEAAQMpAAFjAUAAAwAAECAAAyAARiAAUCAAGgAA8CABQRZgEAYDAwY2NjYwgA
+QDY2NjYIAAACAAAIAGA5OTk5DQoKAEAzMzMzCAAPAgAvBKAAHzEBADQvDQpJADQDAgAPUAB2AOAB
+A5QACAIAD6AAdg8CAAQPoABeDygBBA8CAAUPoABeDwIAHA+gAEYPKAEcDwIABQ+gAEYPAgA0D6AA
+LA0mAQ9QACwNAgAPUAC0DSgBDwIABQ/wALQPAgAWC/AADygBFg8CAAULUAAPAgAuD1AAggcmAQ+g
+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
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+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
+
+
+--[ 0xA - The Poem
+
+Use the script against the image sample in order to extract a file. Therein
+lies the poem.
+
+
+--[ 0xB - References
+
+[1] https://en.wikipedia.org/wiki/ZFS
+[2] https://www.gnu.org/software/ddrescue/manual/ddrescue_manual.html
+[3] http://latex2rtf.sourceforge.net/RTF-Spec-1.2.pdf
+[4] https://virustotal.github.io/yara/
+[5] https://android.googlesource.com/platform/external/lz4/+/HEAD/doc/lz4_Frame_format.md
