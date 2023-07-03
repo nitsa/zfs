@@ -12,4 +12,5 @@ formatted.
 1. This is a forensics story
 2. Python script mentioned in the article has been ported for use with Python 3 as extractor.py
 3. Scripts tested on Win10
-4. Enjoy !
+4. Presentation created using Libre Office Impress
+5. Enjoy !
